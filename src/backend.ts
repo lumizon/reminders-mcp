@@ -48,6 +48,25 @@ async function jxa<T>(script: string, arg: unknown): Promise<T> {
   return JSON.parse(stdout) as T;
 }
 
+// A reminder created through EventKit can take a few seconds to show up in
+// Reminders' scripting interface, which fails with "Can't get object" until it
+// does. Polling fast doesn't help (it seems to keep it from catching up), so
+// back off instead.
+const NOT_YET_VISIBLE = /Can.t get object/i;
+const BACKOFF_MS = [500, 1000, 2000, 4000];
+
+async function whenVisible<T>(fn: () => Promise<T>): Promise<T> {
+  for (const wait of BACKOFF_MS) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!NOT_YET_VISIBLE.test((e as Error).message)) throw e;
+      await new Promise((resolve) => setTimeout(resolve, wait));
+    }
+  }
+  return fn();
+}
+
 export async function flaggedIds(): Promise<Set<string>> {
   const ids = await jxa<string[]>(
     `function run() { return JSON.stringify(Application("Reminders").reminders.whose({ flagged: true }).id()); }`,
@@ -57,19 +76,23 @@ export async function flaggedIds(): Promise<Set<string>> {
 }
 
 export async function setFlagged(id: string, flagged: boolean): Promise<void> {
-  await jxa(
-    `function run(argv) {
-      const a = JSON.parse(argv[0]);
-      Application("Reminders").reminders.byId(a.id).flagged = a.flagged;
-      return "true";
-    }`,
-    { id: toAppleId(id), flagged },
+  await whenVisible(() =>
+    jxa(
+      `function run(argv) {
+        const a = JSON.parse(argv[0]);
+        Application("Reminders").reminders.byId(a.id).flagged = a.flagged;
+        return "true";
+      }`,
+      { id: toAppleId(id), flagged },
+    ),
   );
 }
 
 export async function isFlagged(id: string): Promise<boolean> {
-  return jxa<boolean>(
-    `function run(argv) { return JSON.stringify(Application("Reminders").reminders.byId(JSON.parse(argv[0])).flagged()); }`,
-    toAppleId(id),
+  return whenVisible(() =>
+    jxa<boolean>(
+      `function run(argv) { return JSON.stringify(Application("Reminders").reminders.byId(JSON.parse(argv[0])).flagged()); }`,
+      toAppleId(id),
+    ),
   );
 }

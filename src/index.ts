@@ -4,7 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { flaggedIds, helper, isFlagged, setFlagged } from "./backend.js";
 
-type Reminder = { id: string; flagged?: boolean; [k: string]: unknown };
+type Reminder = { id: string; flagged?: boolean | null; warning?: string; [k: string]: unknown };
 type ReminderPage = { total: number; returned: number; reminders: Reminder[] };
 
 const server = new McpServer({ name: "reminders", version: "0.1.0" });
@@ -31,9 +31,29 @@ function defined(obj: Record<string, unknown>) {
   return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
 }
 
-async function withFlag(r: Reminder, flagged?: boolean): Promise<Reminder> {
-  if (flagged !== undefined) await setFlagged(r.id, flagged);
-  return { ...r, flagged: flagged ?? (await isFlagged(r.id)) };
+// Adds the flag, which only Reminders' scripting interface knows about. The
+// reminder itself is already saved by now, so a flag failure becomes a warning
+// rather than an error: reporting the call as failed would make clients retry
+// and create duplicates. `known` skips the lookup when the caller already knows
+// the answer (a new reminder is never flagged unless asked).
+async function withFlag(
+  r: Reminder,
+  { set, known }: { set?: boolean; known?: boolean } = {},
+): Promise<Reminder> {
+  try {
+    if (set !== undefined) {
+      await setFlagged(r.id, set);
+      return { ...r, flagged: set };
+    }
+    return { ...r, flagged: known ?? (await isFlagged(r.id)) };
+  } catch (e) {
+    const action = set === undefined ? "read" : "set";
+    return {
+      ...r,
+      flagged: null,
+      warning: `Saved, but the flag could not be ${action}: ${(e as Error).message} Do not retry the whole call; use update_reminder for the flag only.`,
+    };
+  }
 }
 
 server.registerTool(
@@ -129,7 +149,7 @@ server.registerTool(
           url: a.url,
         }),
       );
-      return withFlag(r, a.flagged);
+      return withFlag(r, a.flagged === undefined ? { known: false } : { set: a.flagged });
     }),
 );
 
@@ -168,7 +188,7 @@ server.registerTool(
           url: a.url,
         }),
       );
-      return withFlag(r, a.flagged);
+      return withFlag(r, { set: a.flagged });
     }),
 );
 
