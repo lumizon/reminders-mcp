@@ -23,6 +23,8 @@ Dates: `"YYYY-MM-DD"` for all-day, or ISO 8601 like `"2026-11-05T15:00"` (local 
 - EventKit has no public API for the **flagged** state, so that one field is read and written through JXA (`osascript`).
 - `src/` is the TypeScript MCP server (stdio) that calls both.
 
+A reminder created through EventKit can take a few seconds to appear in Reminders' scripting interface. Setting a flag at creation therefore retries for up to ~8 s. If the flag still can't be set or read, the reminder is returned with `flagged: null` and a `warning` instead of an error, since it was saved and retrying the whole call would duplicate it.
+
 ## Setup
 
 Requires macOS 14+, Node 18+, and Xcode command line tools (`swiftc`).
@@ -44,3 +46,7 @@ For Claude Desktop, add to `~/Library/Application Support/Claude/claude_desktop_
   }
 }
 ```
+
+## License
+
+MIT, see [LICENSE](LICENSE).
