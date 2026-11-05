@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { flaggedIds, helper, isFlagged, setFlagged } from "./backend.js";
+import { appendNote, createFolder, createNote, getNote, listFolders, listNotes } from "./notes.js";
 
 type Reminder = { id: string; flagged?: boolean | null; warning?: string; [k: string]: unknown };
 type ReminderPage = { total: number; returned: number; reminders: Reminder[] };
@@ -396,6 +397,83 @@ server.registerTool(
     annotations: { destructiveHint: true },
   },
   (a) => respond(() => helper("deleteEvent", defined(a))),
+);
+
+// --- Notes ------------------------------------------------------------------
+
+server.registerTool(
+  "list_note_folders",
+  {
+    title: "List note folders",
+    description: "List Notes folders with their account and note count.",
+    annotations: { readOnlyHint: true },
+  },
+  () => respond(listFolders),
+);
+
+server.registerTool(
+  "create_note_folder",
+  {
+    title: "Create note folder",
+    description: "Create a Notes folder in the default account (usually iCloud).",
+    inputSchema: { name: z.string().min(1) },
+  },
+  (a) => respond(() => createFolder(a.name)),
+);
+
+server.registerTool(
+  "list_notes",
+  {
+    title: "List notes",
+    description:
+      "List notes (id, title, folder, last modified), newest first, without their content. search matches titles; with in_body it also matches note text, which is slower: narrow it with folder.",
+    inputSchema: {
+      folder: z.string().optional().describe("Folder name. Omit for all folders."),
+      search: z.string().optional().describe("Case-insensitive text to look for"),
+      in_body: z.boolean().default(false).describe("Also search note text, not just titles"),
+      limit: z.number().int().min(1).max(500).default(50),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  (a) => respond(() => listNotes(a)),
+);
+
+server.registerTool(
+  "get_note",
+  {
+    title: "Get note",
+    description:
+      "Read a note as Markdown. Link targets are not available through Notes' scripting interface: links come back as their text only.",
+    inputSchema: { id: z.string().describe("Note id, as list_notes returned it") },
+    annotations: { readOnlyHint: true },
+  },
+  (a) => respond(() => getNote(a.id)),
+);
+
+server.registerTool(
+  "create_note",
+  {
+    title: "Create note",
+    description:
+      "Create a note from Markdown: headings (#, ##, ###), bullet and numbered lists (nested by indentation), **bold**, *italic*, `code`, code blocks, [links](url) and tables. Checkboxes become ☐/☑ text, since Notes checklists can't be scripted.",
+    inputSchema: {
+      folder: z.string().min(1).describe("Folder name (must exist; see create_note_folder)"),
+      title: z.string().min(1).describe("Becomes the note's first line, as its title"),
+      markdown: z.string().optional().describe("The note's content, below the title"),
+    },
+  },
+  (a) => respond(() => createNote(a)),
+);
+
+server.registerTool(
+  "append_to_note",
+  {
+    title: "Append to note",
+    description:
+      "Add Markdown to the end of a note. Only works on notes this server created and that haven't been edited in Notes since, because appending rewrites the whole note and would drop what the scripting interface can't see (checklists, highlights, drawings). Otherwise create a new note.",
+    inputSchema: { id: z.string(), markdown: z.string().min(1) },
+  },
+  (a) => respond(() => appendNote(a.id, a.markdown)),
 );
 
 await server.connect(new StdioServerTransport());

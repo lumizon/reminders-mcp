@@ -35,15 +35,15 @@ const APPLE_ID_PREFIX = "x-apple-reminder://";
 const toAppleId = (id: string) => (id.startsWith(APPLE_ID_PREFIX) ? id : APPLE_ID_PREFIX + id);
 const fromAppleId = (id: string) => id.replace(APPLE_ID_PREFIX, "");
 
-async function jxa<T>(script: string, arg: unknown): Promise<T> {
+export async function jxa<T>(script: string, arg: unknown, app = "Reminders"): Promise<T> {
   const { stdout, stderr, failed } = await exec("osascript", ["-l", "JavaScript", "-e", script, JSON.stringify(arg)]);
   if (failed) {
     if (/-1743|not allowed|Not authorized/i.test(stderr)) {
       throw new Error(
-        "Not authorized to automate Reminders (needed for flags). Grant access in System Settings → Privacy & Security → Automation.",
+        `Not authorized to automate ${app}. Grant access in System Settings → Privacy & Security → Automation.`,
       );
     }
-    throw new Error(stderr.replace(/^.*?execution error: (Error: )?/s, "").replace(/ \(-?\d+\)\s*$/, "").trim());
+    throw new Error(stderr.replace(/^.*?execution error: (Error: )*/s, "").replace(/ \(-?\d+\)\s*$/, "").trim());
   }
   return JSON.parse(stdout) as T;
 }

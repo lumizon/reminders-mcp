@@ -1,6 +1,6 @@
 # reminders-mcp
 
-An MCP server for controlling macOS Reminders and Calendar.
+An MCP server for controlling macOS Reminders, Calendar and Notes.
 
 ## Tools
 
@@ -20,6 +20,11 @@ An MCP server for controlling macOS Reminders and Calendar.
 | `create_event` | Title, start/end, calendar, location, notes, URL, alerts (minutes before) |
 | `update_event` | Change any field; moving the start keeps the length; `null` clears location/notes/URL |
 | `delete_event` | Delete an event |
+| `list_note_folders` / `create_note_folder` | Notes folders, with note counts; create one |
+| `list_notes` | Titles, folder and last-modified date, newest first; search titles, or note text with `in_body` |
+| `get_note` | A note as Markdown |
+| `create_note` | A note from Markdown: headings, nested lists, bold, italic, code, links, tables |
+| `append_to_note` | Add Markdown to the end of a note this server wrote (see below) |
 
 Dates: `"YYYY-MM-DD"` for all-day, or ISO 8601 like `"2026-11-05T15:00"` (local time unless an offset is given). An all-day event's `end` is its last day, inclusive.
 
@@ -35,6 +40,18 @@ Occurrences of a recurring event share one id. To change or delete one, pass `oc
 
 A reminder created through EventKit can take a few seconds to appear in Reminders' scripting interface. Setting a flag at creation therefore retries for up to ~8 s. If the flag still can't be set or read, the reminder is returned with `flagged: null` and a `warning` instead of an error, since it was saved and retrying the whole call would duplicate it.
 
+### Notes
+
+Notes has no EventKit equivalent, so the Notes tools go through its scripting interface (JXA), which reads and writes a note's body as HTML. That HTML doesn't carry everything:
+
+- Links work in the notes created, but read back as their text only: the URL isn't exposed.
+- Checklists, highlights, tags and drawings can't be created or read. Markdown checkboxes become ☐ / ☑ text.
+- Headings are Notes' large bold text, not its Title/Heading styles.
+
+There is no way to insert into a note, only to replace its whole body, which would silently drop what the HTML doesn't carry. So notes are never rewritten. `append_to_note` only works on notes this server created, and only if they haven't been edited in Notes since it last wrote them (it records each note's modification date in `~/Library/Application Support/reminders-mcp/notes-written.json`). Otherwise it refuses, and a new note is the way to go. There is no delete tool.
+
+Reads cost roughly 0.2 s per note, so `list_notes` returns no content, and `in_body` search is best narrowed to one folder. Notes' trash appears as an ordinary folder; listing all folders skips it.
+
 ## Setup
 
 Requires macOS 14+, Node 18+, and Xcode command line tools (`swiftc`).
@@ -45,7 +62,7 @@ npm run build
 claude mcp add --scope user reminders -- node "$PWD/dist/index.js"
 ```
 
-On first use macOS asks the host app (Terminal, Claude, …) for access to **Reminders** and **Calendars** (EventKit) and to **automate Reminders** (flags). If you denied it, re-enable it under System Settings → Privacy & Security → Reminders / Calendars / Automation.
+On first use macOS asks the host app (Terminal, Claude, …) for access to **Reminders** and **Calendars** (EventKit) and to **automate Reminders** (flags) and **Notes**. If you denied it, re-enable it under System Settings → Privacy & Security → Reminders / Calendars / Automation.
 
 For Claude Desktop, add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
