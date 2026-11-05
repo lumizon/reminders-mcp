@@ -23,20 +23,22 @@ func emit(_ obj: [String: Any]) {
 
 // MARK: - Access
 
-func requestAccess() throws {
-    switch EKEventStore.authorizationStatus(for: .reminder) {
+func requestAccess(_ type: EKEntityType) throws {
+    switch EKEventStore.authorizationStatus(for: type) {
     case .fullAccess:
         return
     case .notDetermined:
         let sem = DispatchSemaphore(value: 0)
         var granted = false
-        store.requestFullAccessToReminders { ok, _ in granted = ok; sem.signal() }
+        let done: EKEventStoreRequestAccessCompletionHandler = { ok, _ in granted = ok; sem.signal() }
+        if type == .event { store.requestFullAccessToEvents(completion: done) } else { store.requestFullAccessToReminders(completion: done) }
         sem.wait()
         if granted { return }
     default:
         break
     }
-    throw HelperError(message: "Not authorized to access Reminders. Grant access in System Settings → Privacy & Security → Reminders for the app running this server.")
+    let app = type == .event ? "Calendars" : "Reminders"
+    throw HelperError(message: "Not authorized to access \(app). Grant full access in System Settings → Privacy & Security → \(app) for the app running this server.")
 }
 
 // MARK: - Dates
@@ -283,6 +285,180 @@ func deleteList(_ a: [String: Any]) throws -> Any {
     return ["deleted": true, "name": cal.title]
 }
 
+// MARK: - Calendar events
+
+func eventCalendars() -> [EKCalendar] { store.calendars(for: .event) }
+
+func findCalendar(_ name: String) throws -> EKCalendar {
+    if let c = eventCalendars().first(where: { $0.title == name }) { return c }
+    if let c = eventCalendars().first(where: { $0.title.localizedCaseInsensitiveCompare(name) == .orderedSame }) { return c }
+    throw HelperError(message: "Calendar not found: \(name)")
+}
+
+let dayFormatter: DateFormatter = {
+    let f = DateFormatter()
+    f.locale = Locale(identifier: "en_US_POSIX")
+    f.timeZone = localTZ
+    f.dateFormat = "yyyy-MM-dd"
+    return f
+}()
+
+func isDayOnly(_ s: String) -> Bool { s.wholeMatch(of: /\d{4}-\d{2}-\d{2}/) != nil }
+
+/// All-day events report dates as "YYYY-MM-DD", with `end` the last day (inclusive);
+/// timed events as ISO datetimes.
+func eventTime(_ e: EKEvent, _ d: Date) -> Any { e.isAllDay ? dayFormatter.string(from: d) : isoString(d) }
+
+func serializeEvent(_ e: EKEvent, full: Bool) -> [String: Any] {
+    var o: [String: Any] = [
+        "id": e.eventIdentifier ?? NSNull(),
+        "title": e.title ?? "",
+        "calendar": e.calendar?.title ?? NSNull(),
+        "start": eventTime(e, e.startDate),
+        "end": eventTime(e, e.isAllDay ? e.endDate.addingTimeInterval(-1) : e.endDate),
+        "allDay": e.isAllDay,
+        "location": (e.location?.isEmpty ?? true) ? NSNull() : e.location!,
+        "recurring": e.hasRecurrenceRules,
+    ]
+    if full {
+        o["notes"] = (e.notes?.isEmpty ?? true) ? NSNull() : e.notes!
+        o["url"] = e.url?.absoluteString ?? NSNull()
+        o["alertMinutesBefore"] = (e.alarms ?? []).compactMap { a -> Int? in
+            a.absoluteDate == nil ? Int(-a.relativeOffset / 60) : nil
+        }
+        o["attendees"] = (e.attendees ?? []).map { $0.name ?? $0.url.absoluteString.replacingOccurrences(of: "mailto:", with: "") }
+        o["creationDate"] = isoString(e.creationDate)
+        o["lastModified"] = isoString(e.lastModifiedDate)
+    }
+    return o
+}
+
+/// A recurring event's occurrences share one id; `occurrence` (the start of the one
+/// meant, as listed) picks it. Without it, EventKit returns the first occurrence.
+func findEvent(_ a: [String: Any]) throws -> EKEvent {
+    guard let id = a["id"] as? String, !id.isEmpty else { throw HelperError(message: "id is required") }
+    guard let first = store.event(withIdentifier: id) else { throw HelperError(message: "Event not found: \(id)") }
+    guard let occ = a["occurrence"] as? String else { return first }
+    let at = try parseDate(occ)
+    let dayStart = Calendar.current.startOfDay(for: at)
+    let candidates = store.events(matching: store.predicateForEvents(
+        withStart: dayStart, end: dayStart.addingTimeInterval(86_400), calendars: [first.calendar]))
+    if let e = candidates.first(where: { $0.eventIdentifier == id && (isDayOnly(occ) || $0.startDate == at) }) { return e }
+    throw HelperError(message: "No occurrence of \(id) at \(occ)")
+}
+
+func applyEventFields(_ e: EKEvent, _ a: [String: Any]) throws {
+    if let t = a["title"] as? String { e.title = t }
+    if let c = a["calendar"] as? String { e.calendar = try findCalendar(c) }
+    if let s = a["start"] as? String {
+        let duration = e.startDate.map { e.endDate.timeIntervalSince($0) }
+        e.isAllDay = isDayOnly(s)
+        e.startDate = try parseDate(s)
+        // Moving an event keeps its length unless a new end is given.
+        if a["end"] == nil { e.endDate = e.startDate.addingTimeInterval(e.isAllDay ? 0 : (duration ?? 3600)) }
+    }
+    if let s = a["end"] as? String {
+        if e.isAllDay != isDayOnly(s) { throw HelperError(message: "start and end must both be dates (all-day) or both datetimes") }
+        e.endDate = try parseDate(s)
+        if e.endDate < e.startDate { throw HelperError(message: "end is before start") }
+    }
+    if a.keys.contains("location") { e.location = a["location"] as? String }
+    if a.keys.contains("notes") { e.notes = a["notes"] as? String }
+    if a.keys.contains("url") {
+        if let s = a["url"] as? String { e.url = URL(string: s) } else { e.url = nil }
+    }
+    if a.keys.contains("alertMinutesBefore") {
+        for alarm in e.alarms ?? [] { e.removeAlarm(alarm) }
+        for m in a["alertMinutesBefore"] as? [Int] ?? [] { e.addAlarm(EKAlarm(relativeOffset: TimeInterval(-m * 60))) }
+    }
+}
+
+func span(_ a: [String: Any]) -> EKSpan { (a["span"] as? String) == "future" ? .futureEvents : .thisEvent }
+
+func listCalendars() throws -> Any {
+    let defaultId = store.defaultCalendarForNewEvents?.calendarIdentifier
+    return eventCalendars().map { c -> [String: Any] in
+        [
+            "id": c.calendarIdentifier,
+            "name": c.title,
+            "account": c.source?.title ?? NSNull(),
+            "writable": c.allowsContentModifications,
+            "isDefault": c.calendarIdentifier == defaultId,
+        ]
+    }
+}
+
+func createCalendar(_ a: [String: Any]) throws -> Any {
+    guard let name = a["name"] as? String, !name.isEmpty else { throw HelperError(message: "name is required") }
+    if eventCalendars().contains(where: { $0.title == name }) { throw HelperError(message: "A calendar named \(name) already exists") }
+    let cal = EKCalendar(for: .event, eventStore: store)
+    cal.title = name
+    guard let source = store.defaultCalendarForNewEvents?.source
+        ?? store.sources.first(where: { $0.sourceType == .calDAV || $0.sourceType == .local }) else {
+        throw HelperError(message: "No account available to create the calendar in")
+    }
+    cal.source = source
+    if let hex = a["color"] as? String {
+        guard let v = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16), hex.count >= 6 else {
+            throw HelperError(message: "color must be a hex like #E8A33D")
+        }
+        cal.cgColor = CGColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255, blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+    try store.saveCalendar(cal, commit: true)
+    return ["id": cal.calendarIdentifier, "name": cal.title, "account": source.title]
+}
+
+func listEvents(_ a: [String: Any]) throws -> Any {
+    let cals = try (a["calendar"] as? String).map { [try findCalendar($0)] } ?? eventCalendars()
+    let from = try (a["from"] as? String).map(parseDate) ?? Calendar.current.startOfDay(for: Date())
+    var to = try (a["to"] as? String).map(parseDate) ?? from.addingTimeInterval(7 * 86_400)
+    // A day-only "to" means through the end of that day.
+    if let s = a["to"] as? String, isDayOnly(s) { to = to.addingTimeInterval(86_400) }
+    if to <= from { throw HelperError(message: "to must be after from") }
+    let query = (a["search"] as? String)?.lowercased()
+    let limit = a["limit"] as? Int ?? 100
+
+    let events = store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: cals))
+        .filter { e in
+            guard let q = query else { return true }
+            return [e.title, e.location, e.notes].contains { ($0 ?? "").lowercased().contains(q) }
+        }
+        .sorted { $0.startDate < $1.startDate }
+    return [
+        "total": events.count,
+        "returned": min(limit, events.count),
+        "events": events.prefix(limit).map { serializeEvent($0, full: false) },
+    ]
+}
+
+func createEvent(_ a: [String: Any]) throws -> Any {
+    guard let title = a["title"] as? String, !title.isEmpty else { throw HelperError(message: "title is required") }
+    guard a["start"] is String else { throw HelperError(message: "start is required") }
+    let e = EKEvent(eventStore: store)
+    e.title = title
+    if a["calendar"] == nil {
+        guard let def = store.defaultCalendarForNewEvents else { throw HelperError(message: "No default calendar; pass calendar") }
+        e.calendar = def
+    }
+    try applyEventFields(e, a)
+    try store.save(e, span: .thisEvent, commit: true)
+    return serializeEvent(e, full: true)
+}
+
+func updateEvent(_ a: [String: Any]) throws -> Any {
+    let e = try findEvent(a)
+    try applyEventFields(e, a)
+    try store.save(e, span: span(a), commit: true)
+    return serializeEvent(e, full: true)
+}
+
+func deleteEvent(_ a: [String: Any]) throws -> Any {
+    let e = try findEvent(a)
+    let out: [String: Any] = ["deleted": true, "id": e.eventIdentifier ?? NSNull(), "title": e.title ?? "", "start": eventTime(e, e.startDate)]
+    try store.remove(e, span: span(a), commit: true)
+    return out
+}
+
 // MARK: - Main
 
 guard CommandLine.arguments.count >= 2,
@@ -293,10 +469,19 @@ guard CommandLine.arguments.count >= 2,
 }
 let args = req["args"] as? [String: Any] ?? [:]
 
+let calendarOps: Set = ["listCalendars", "createCalendar", "listEvents", "getEvent", "createEvent", "updateEvent", "deleteEvent"]
+
 do {
-    try requestAccess()
+    try requestAccess(calendarOps.contains(op) ? .event : .reminder)
     let result: Any
     switch op {
+    case "listCalendars": result = try listCalendars()
+    case "createCalendar": result = try createCalendar(args)
+    case "listEvents": result = try listEvents(args)
+    case "getEvent": result = serializeEvent(try findEvent(args), full: true)
+    case "createEvent": result = try createEvent(args)
+    case "updateEvent": result = try updateEvent(args)
+    case "deleteEvent": result = try deleteEvent(args)
     case "listLists": result = try listLists()
     case "listReminders": result = try listReminders(args)
     case "getReminder": result = serialize(try findReminder(args["id"] as? String ?? ""), full: true)

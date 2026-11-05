@@ -234,4 +234,168 @@ server.registerTool(
   (a) => respond(() => helper("deleteList", { name: a.name })),
 );
 
+// --- Calendar ---------------------------------------------------------------
+
+type Event = Record<string, unknown>;
+
+const eventDate =
+  'Date as "YYYY-MM-DD" for an all-day event, or ISO 8601 datetime like "2026-11-10T15:00" (local time unless an offset is given).';
+const occurrence = z
+  .string()
+  .optional()
+  .describe(
+    "For a recurring event: the start of the occurrence meant, as list_events returned it (or its YYYY-MM-DD day). Omit for the first occurrence.",
+  );
+const alerts = z
+  .array(z.number().int())
+  .describe(
+    "Alerts, in minutes before the start (0 = at start). All-day events start at midnight, so negative values fall on the day: -540 = 9:00 that day, 900 = 9:00 the day before.",
+  );
+const span = z
+  .enum(["this", "future"])
+  .default("this")
+  .describe("For a recurring event: change only this occurrence, or this and all future ones");
+
+server.registerTool(
+  "list_calendars",
+  {
+    title: "List calendars",
+    description: "List all calendars, with their account, whether they can be written to, and which is the default.",
+    annotations: { readOnlyHint: true },
+  },
+  () => respond(() => helper("listCalendars")),
+);
+
+server.registerTool(
+  "create_calendar",
+  {
+    title: "Create calendar",
+    description: "Create a calendar in the default calendar's account (usually iCloud).",
+    inputSchema: {
+      name: z.string().min(1),
+      color: z.string().optional().describe('Hex color like "#E8A33D"'),
+    },
+  },
+  (a) => respond(() => helper("createCalendar", defined(a))),
+);
+
+server.registerTool(
+  "list_events",
+  {
+    title: "List events",
+    description:
+      "List calendar events in a date range (default: today and the next 7 days), sorted by start. Recurring events appear once per occurrence, sharing an id.",
+    inputSchema: {
+      from: z.string().optional().describe(`Range start (default: start of today). ${dateDescription}`),
+      to: z.string().optional().describe(`Range end; a plain date includes that whole day (default: from + 7 days). ${dateDescription}`),
+      calendar: z.string().optional().describe("Calendar name. Omit for all calendars."),
+      search: z.string().optional().describe("Case-insensitive text match on title, location or notes"),
+      limit: z.number().int().min(1).max(1000).default(100),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  (a) => respond(() => helper("listEvents", defined(a))),
+);
+
+server.registerTool(
+  "get_event",
+  {
+    title: "Get event",
+    description: "Get full details of an event: notes, URL, alerts, attendees.",
+    inputSchema: { id: z.string().describe("Event id"), occurrence },
+    annotations: { readOnlyHint: true },
+  },
+  (a) => respond(() => helper<Event>("getEvent", defined(a))),
+);
+
+server.registerTool(
+  "create_event",
+  {
+    title: "Create event",
+    description:
+      'Create a calendar event. A "YYYY-MM-DD" start makes an all-day event; a datetime start without end lasts one hour.',
+    inputSchema: {
+      title: z.string().min(1),
+      start: z.string().describe(eventDate),
+      end: z
+        .string()
+        .optional()
+        .describe("Same form as start. For all-day events, the last day (inclusive); omit for a single day."),
+      calendar: z.string().optional().describe("Calendar name. Defaults to the default calendar."),
+      location: z.string().optional(),
+      notes: z.string().optional(),
+      url: z.string().url().optional(),
+      alert_minutes_before: alerts.optional(),
+    },
+  },
+  (a) =>
+    respond(() =>
+      helper<Event>(
+        "createEvent",
+        defined({
+          title: a.title,
+          start: a.start,
+          end: a.end,
+          calendar: a.calendar,
+          location: a.location,
+          notes: a.notes,
+          url: a.url,
+          alertMinutesBefore: a.alert_minutes_before,
+        }),
+      ),
+    ),
+);
+
+server.registerTool(
+  "update_event",
+  {
+    title: "Update event",
+    description:
+      "Update an event. Only provided fields change; pass null for location, notes or url to clear them. Changing start alone keeps the event's length.",
+    inputSchema: {
+      id: z.string(),
+      occurrence,
+      span,
+      title: z.string().min(1).optional(),
+      start: z.string().optional().describe(eventDate),
+      end: z.string().optional().describe("Same form as start. For all-day events, the last day (inclusive)."),
+      calendar: z.string().optional().describe("Move the event to this calendar"),
+      location: z.string().nullable().optional(),
+      notes: z.string().nullable().optional(),
+      url: z.string().url().nullable().optional(),
+      alert_minutes_before: alerts.optional().describe(`${alerts.description} Replaces existing alerts; [] removes them.`),
+    },
+  },
+  (a) =>
+    respond(() =>
+      helper<Event>(
+        "updateEvent",
+        defined({
+          id: a.id,
+          occurrence: a.occurrence,
+          span: a.span,
+          title: a.title,
+          start: a.start,
+          end: a.end,
+          calendar: a.calendar,
+          location: a.location,
+          notes: a.notes,
+          url: a.url,
+          alertMinutesBefore: a.alert_minutes_before,
+        }),
+      ),
+    ),
+);
+
+server.registerTool(
+  "delete_event",
+  {
+    title: "Delete event",
+    description: "Delete an event (for a recurring one, this occurrence or this and all future ones).",
+    inputSchema: { id: z.string(), occurrence, span },
+    annotations: { destructiveHint: true },
+  },
+  (a) => respond(() => helper("deleteEvent", defined(a))),
+);
+
 await server.connect(new StdioServerTransport());

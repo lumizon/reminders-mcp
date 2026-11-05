@@ -1,7 +1,7 @@
 {
   "name": "reminders-mcp",
   "version": "1.0.0",
-  "description": "MCP server for controlling macOS Reminders",
+  "description": "MCP server for controlling macOS Reminders and Calendar",
   "main": "dist/index.js",
   "scripts": {
     "build": "rm -rf dist && npm run build:helper && tsc",
@@ -13,6 +13,7 @@
     "model-context-protocol",
     "macos",
     "reminders",
+    "calendar",
     "eventkit"
   ],
   "author": "Loïc Ernult",
