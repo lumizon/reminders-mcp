@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 // tell all-day from timed due dates). EventKit has no public "flagged" API, so
 // that one field goes through Reminders' scripting interface instead.
 
-const HELPER = fileURLToPath(new URL("../bin/reminders-helper", import.meta.url));
+const HELPER = fileURLToPath(new URL("../bin/macos-helper", import.meta.url));
 
 function exec(file: string, args: string[]): Promise<{ stdout: string; stderr: string; failed: boolean }> {
   return new Promise((resolve, reject) => {
@@ -25,7 +25,7 @@ export async function helper<T = unknown>(op: string, args: Record<string, unkno
   try {
     res = JSON.parse(stdout);
   } catch {
-    throw new Error(`reminders-helper failed: ${(stderr || stdout).trim().slice(0, 500)}`);
+    throw new Error(`macos-helper failed: ${(stderr || stdout).trim().slice(0, 500)}`);
   }
   if (!res.ok) throw new Error(res.error);
   return res.result as T;

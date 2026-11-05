@@ -1,12 +1,12 @@
 {
-  "name": "reminders-mcp",
-  "version": "1.0.0",
-  "description": "MCP server for controlling macOS Reminders, Calendar and Notes",
+  "name": "@lumizon/macos-mcp",
+  "version": "1.1.0",
+  "description": "MCP server for macOS apps: Reminders, Calendar and Notes",
   "main": "dist/index.js",
   "scripts": {
     "build": "rm -rf dist && npm run build:helper && tsc",
     "start": "node dist/index.js",
-    "build:helper": "mkdir -p bin && swiftc -O -enable-bare-slash-regex helper/main.swift -o bin/reminders-helper"
+    "build:helper": "mkdir -p bin && swiftc -O -enable-bare-slash-regex helper/main.swift -o bin/macos-helper"
   },
   "keywords": [
     "mcp",
@@ -21,7 +21,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lumizon/reminders-mcp.git"
+    "url": "git+https://github.com/lumizon/macos-mcp.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
@@ -33,6 +33,6 @@
   },
   "type": "module",
   "bin": {
-    "reminders-mcp": "dist/index.js"
+    "macos-mcp": "dist/index.js"
   }
 }

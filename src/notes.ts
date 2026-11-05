@@ -229,7 +229,7 @@ function localIso(utc: string | null): string | null {
 // When this server last wrote each note: { [id]: modificationDate }. Appending
 // rewrites the whole body, so it's only safe if the note is still exactly as we
 // left it.
-const STATE = join(homedir(), "Library", "Application Support", "reminders-mcp", "notes-written.json");
+const STATE = join(homedir(), "Library", "Application Support", "macos-mcp", "notes-written.json");
 
 async function written(): Promise<Record<string, string>> {
   try {

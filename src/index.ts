@@ -8,7 +8,7 @@ import { appendNote, createFolder, createNote, getNote, listFolders, listNotes }
 type Reminder = { id: string; flagged?: boolean | null; warning?: string; [k: string]: unknown };
 type ReminderPage = { total: number; returned: number; reminders: Reminder[] };
 
-const server = new McpServer({ name: "reminders", version: "0.1.0" });
+const server = new McpServer({ name: "macos", version: "0.2.0" });
 
 const dateDescription =
   'Date as "YYYY-MM-DD" (all-day) or ISO 8601 datetime like "2026-11-05T15:00" (local time unless an offset is given).';

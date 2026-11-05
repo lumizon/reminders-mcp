@@ -1,5 +1,5 @@
-// reminders-helper: a one-shot EventKit bridge for the MCP server.
-// Usage: reminders-helper '<json {"op": String, "args": Object}>'
+// macos-helper: a one-shot EventKit bridge for the MCP server.
+// Usage: macos-helper '<json {"op": String, "args": Object}>'
 // Prints {"ok": true, "result": ...} or {"ok": false, "error": String} to stdout.
 // In args, an absent key means "leave unchanged" and JSON null means "clear".
 
@@ -465,7 +465,7 @@ guard CommandLine.arguments.count >= 2,
       let data = CommandLine.arguments[1].data(using: .utf8),
       let req = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
       let op = req["op"] as? String else {
-    fail("Usage: reminders-helper '{\"op\": ..., \"args\": {...}}'")
+    fail("Usage: macos-helper '{\"op\": ..., \"args\": {...}}'")
 }
 let args = req["args"] as? [String: Any] ?? [:]
 
